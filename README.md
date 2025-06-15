@@ -239,5 +239,3 @@ If you find this project helpful, consider supporting me on [Afdian](https://afd
 [![Star History Chart](https://api.star-history.com/svg?repos=yushangxiao/claude2api&type=Date)](https://www.star-history.com/#yushangxiao/claude2api&Date)
 
 Made with ❤️ by [yushangxiao](https://github.com/yushangxiao)
-
-[![Powered by DartNode](https://dartnode.com/branding/DN-Open-Source-sm.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
