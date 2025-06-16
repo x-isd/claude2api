@@ -263,7 +263,7 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 			// 继续处理响应
 		}
 		line := scanner.Text()
-		logger.Info(fmt.Sprintf("Claude SSE line: %s", line))
+		// logger.Info(fmt.Sprintf("Claude SSE line: %s", line))
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -280,16 +280,25 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 			if event.ContentBlock.Type == "tool_result" {
 				useToolEnd = true
 			}
-			if event.Delta.Type == "text_delta" && event.Delta.Text != "" {
-				res_text := event.Delta.Text
+			if event.Type == "content_block_stop" {
+				res_text := ""
 				if thinkingShown {
-					res_text = "</think>\n" + res_text
+					res_text = "</think>\n"
 					thinkingShown = false
 				}
 				if partial_json_shown {
-					res_text = "\n```\n" + res_text
+					res_text = "\n```\n"
 					partial_json_shown = false
 				}
+				res_all_text += res_text
+				if !stream {
+					continue
+				}
+				model.ReturnOpenAIResponse(res_text, stream, gc)
+				continue
+			}
+			if event.Delta.Type == "text_delta" && event.Delta.Text != "" {
+				res_text := event.Delta.Text
 				res_all_text += res_text
 				if !stream {
 					continue
@@ -319,7 +328,7 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 					continue
 				}
 				//获取语言,下一次就是了
-				if res_text == ",\"language\":" {
+				if res_text == ",\"language\":" || res_text == ",\"type\":" {
 					nextLanguage = true
 					continue
 				}
@@ -327,6 +336,9 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 				if nextLanguage {
 					languageStr = res_text[1:]
 					logger.Info(fmt.Sprintf("获取的语言为:%s", languageStr))
+					if languageStr == "text/html" {
+						languageStr = "html"
+					}
 					nextLanguage = false
 				}
 				//使用工具
