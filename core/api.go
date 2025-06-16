@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,8 +28,11 @@ type Client struct {
 }
 
 type ResponseEvent struct {
-	Type  string `json:"type"`
-	Index int    `json:"index"`
+	Type         string `json:"type"`
+	Index        int    `json:"index"`
+	ContentBlock struct {
+		Type string `json:"type"`
+	} `json:"content_block"`
 	Delta struct {
 		Type     string `json:"type"`
 		Text     string `json:"text"`
@@ -87,15 +91,15 @@ func NewClient(sessionKey string, proxy string, model string) *Client {
 					"type": "web_search_v0",
 					"name": "web_search",
 				},
-				// {"type": "artifacts_v0", "name": "artifacts"},
-				// {"type": "repl_v0", "name": "repl"},
+				{"type": "artifacts_v0", "name": "artifacts"},
+				{"type": "repl_v0", "name": "repl"},
 			},
 			"parent_message_uuid": "00000000-0000-4000-8000-000000000000",
 			"attachments":         []interface{}{},
 			"files":               []interface{}{},
 			"sync_sources":        []interface{}{},
 			"rendering_mode":      "messages",
-			"timezone":            "America/New_York",
+			"timezone":            "America/Los_Angeles",
 		},
 	}
 	return c
@@ -245,6 +249,10 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 	thinkingShown := false
 	res_all_text := ""
 	partial_json_shown := false
+	useTool := false
+	useToolEnd := false
+	nextLanguage := false
+	languageStr := "md"
 	for scanner.Scan() {
 		select {
 		case <-clientDone:
@@ -265,6 +273,12 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 			if event.Type == "error" && event.Error.Message != "" {
 				model.ReturnOpenAIResponse(event.Error.Message, stream, gc)
 				return nil
+			}
+			if event.ContentBlock.Type == "tool_use" {
+				useTool = true
+			}
+			if event.ContentBlock.Type == "tool_result" {
+				useToolEnd = true
 			}
 			if event.Delta.Type == "text_delta" && event.Delta.Text != "" {
 				res_text := event.Delta.Text
@@ -298,8 +312,58 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 			}
 			if event.Delta.Type == "input_json_delta" {
 				res_text := event.Delta.PartialJSON
+				//结束使用工具了
+				if useTool && res_text == ",\"content\":" {
+					useTool = false
+					partial_json_shown = false
+					continue
+				}
+				//获取语言,下一次就是了
+				if res_text == ",\"language\":" {
+					nextLanguage = true
+					continue
+				}
+				//获取语言注入
+				if nextLanguage {
+					languageStr = res_text[1:]
+					logger.Info(fmt.Sprintf("获取的语言为:%s", languageStr))
+					nextLanguage = false
+				}
+				//使用工具
+				if useTool {
+					logger.Info(fmt.Sprintf("useTool res_text:%s", res_text))
+					continue
+				}
+				//使用了工具结束拉
+				if useToolEnd {
+					useToolEnd = false
+					continue
+				}
+				//存在代码首字母为"的情况,特殊处理
+				if strings.HasPrefix(res_text, "\"") {
+					res_text = res_text[1:]
+				}
+				//可能会存在多出一个}的情况
+				if res_text == "\"}" || res_text == "}" {
+					res_text = ""
+				}
+				//转义
+				unquote, err := strconv.Unquote(fmt.Sprintf("\"%s\"", res_text))
+				if err == nil {
+					res_text = unquote
+				} else {
+					logger.Error(fmt.Sprintf("转化出错:%s", err.Error()))
+					res_text = strings.ReplaceAll(res_text, "\\\\n", "")
+					res_text = strings.ReplaceAll(res_text, "\\\\u", "\\u")
+					res_text = strings.ReplaceAll(res_text, "\\\"", "\"")
+					res_text = strings.ReplaceAll(res_text, "\\\\'", "'")
+					res_text = strings.ReplaceAll(res_text, "\\n", "\n")
+					res_text = strings.ReplaceAll(res_text, "\\t", "\t")
+					res_text = decodeUnicodeEscape(res_text)
+				}
+
 				if !partial_json_shown {
-					res_text = "\n```\n " + res_text
+					res_text = "\n```" + languageStr + "\n" + res_text
 					partial_json_shown = true
 				}
 				res_all_text += res_text
@@ -323,6 +387,28 @@ func (c *Client) HandleResponse(body io.ReadCloser, stream bool, gc *gin.Context
 	}
 
 	return nil
+}
+func decodeUnicodeEscape(s string) string {
+	var result []rune
+	for i := 0; i < len(s); i++ {
+		// 检查是否是 Unicode 转义序列
+		if len(s)-i >= 6 && s[i:i+2] == "\\u" {
+			// 尝试解析 Unicode 码点
+			code, err := strconv.ParseInt(s[i+2:i+6], 16, 32)
+			if err == nil {
+				// 将码点转换为字符
+				result = append(result, rune(code))
+				// 跳过已处理的 Unicode 转义序列
+				i += 5
+			} else {
+				// 如果解析失败，保留原始字符
+				result = append(result, rune(s[i]))
+			}
+		} else {
+			result = append(result, rune(s[i]))
+		}
+	}
+	return string(result)
 }
 
 // DeleteConversation deletes a conversation by ID
