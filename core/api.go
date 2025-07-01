@@ -138,7 +138,7 @@ func (c *Client) GetOrgID() (string, error) {
 		return orgs[0].UUID, nil
 	}
 	for _, org := range orgs {
-		if org.RateLimitTier == "default_claude_ai" {
+		if org.RateLimitTier == "default_claude_ai" || org.RateLimitTier == "default_claude_max_20x" || org.RateLimitTier == "default_raven_enterprise" {
 			return org.UUID, nil
 		}
 	}
