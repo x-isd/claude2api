@@ -24,4 +24,5 @@ WORKDIR /app
 COPY --from=build /app/main .  
 
 # Command to run the executable  
+USER 10020
 CMD ["./main"]  
